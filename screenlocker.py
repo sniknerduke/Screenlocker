@@ -3,6 +3,9 @@ Screen Locker - A full-screen locker that blocks keyboard shortcuts and
 requires a password to unlock.  To cancel without the password, restart
 the computer.
 
+Uses the 'keyboard' library (suppress=True) for reliable OS-level
+key blocking — the same approach used by proven screen lockers on GitHub.
+
 Blocked shortcuts:
     Alt+Tab, Alt+Esc, Alt+F4, Win+R, Win+D, Win+E, Win+<any>,
     Ctrl+Esc (Start), Ctrl+Shift+Esc (Task Manager).
@@ -21,11 +24,10 @@ Usage:
 
 import tkinter as tk
 import ctypes
-import ctypes.wintypes as wintypes
 import sys
 import argparse
-import threading
 import winreg
+import keyboard  # pip install keyboard
 
 # ──────────────────── Configuration ────────────────────
 DEFAULT_PASSWORD = "1234"
@@ -34,40 +36,6 @@ ACCENT_COLOR = "#e94560"
 TEXT_COLOR = "#eaeaea"
 ENTRY_BG = "#16213e"
 FONT_FAMILY = "Segoe UI"
-
-# ──────────────────── Win32 Constants ──────────────────
-WH_KEYBOARD_LL = 13
-WM_KEYDOWN = 0x0100
-WM_KEYUP = 0x0101
-WM_SYSKEYDOWN = 0x0104
-WM_SYSKEYUP = 0x0105
-
-VK_TAB = 0x09
-VK_ESCAPE = 0x1B
-VK_F4 = 0x73
-VK_LWIN = 0x5B
-VK_RWIN = 0x5C
-VK_DELETE = 0x2E
-VK_SHIFT = 0x10
-VK_CONTROL = 0x11
-VK_MENU = 0x12  # Alt
-
-# KBDLLHOOKSTRUCT.flags bit masks
-LLKHF_ALTDOWN = 0x20
-
-# All key messages we intercept (both down AND up — critical for Win key)
-ALL_KEY_MSGS = (WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP)
-
-
-# ── Proper KBDLLHOOKSTRUCT ───────────────────────────
-class KBDLLHOOKSTRUCT(ctypes.Structure):
-    _fields_ = [
-        ("vkCode", wintypes.DWORD),
-        ("scanCode", wintypes.DWORD),
-        ("flags", wintypes.DWORD),
-        ("time", wintypes.DWORD),
-        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
-    ]
 
 
 def parse_args():
@@ -106,103 +74,75 @@ def enable_task_manager():
     _set_disable_taskmgr(0)
 
 
-# ──────────────── Low-level keyboard hook ──────────────
+# ──────────────── Keyboard blocking via 'keyboard' lib ─
 class KeyboardBlocker:
-    """Installs a Windows low-level keyboard hook that swallows dangerous
-    key combinations so the user cannot switch away from the locker.
+    """Uses the 'keyboard' library to suppress all key presses at the
+    OS level, then selectively forwards safe keys to the tkinter Entry.
+    This is the same technique used by Mr-Spect3r/Screen-Locker on GitHub.
 
-    Must block BOTH key-down and key-up for every blocked key, otherwise
-    Windows still registers the shortcut on key-up.
+    keyboard.on_press(callback, suppress=True) installs a proper
+    low-level keyboard hook internally and suppresses EVERY key before
+    it reaches any application — including Alt+Tab, Win+R, etc.
+
+    We then manually inject allowed characters into the password entry.
     """
 
     def __init__(self):
-        self._hook = None
-        self._thread = None
+        self._entry = None   # set later to the tkinter Entry widget
+        self._root = None    # set later to the tkinter root
 
-        # C callback must be stored as an instance attribute so it
-        # is not garbage-collected while the hook is alive.
-        self.HOOKPROC = ctypes.CFUNCTYPE(
-            ctypes.c_long,            # LRESULT
-            ctypes.c_int,             # nCode
-            wintypes.WPARAM,          # wParam
-            wintypes.LPARAM,          # lParam
-        )
-        self._callback = self.HOOKPROC(self._low_level_handler)
+    def set_entry(self, entry, root):
+        self._entry = entry
+        self._root = root
 
-    # ── decide what to swallow ────────────────────────
-    @staticmethod
-    def _should_block(vk_code: int, flags: int) -> bool:
-        """Return True if the keystroke must be eaten."""
-        alt_down = bool(flags & LLKHF_ALTDOWN)
-        ctrl_down = bool(ctypes.windll.user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
-        shift_down = bool(ctypes.windll.user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+    def _on_key(self, event):
+        """Called for every key press. Since suppress=True,
+        keys are blocked from reaching the OS. We manually
+        forward safe characters to the password entry."""
+        if event.event_type != keyboard.KEY_DOWN:
+            return  # only handle key-down
 
-        # ── Win key (left / right) — kills ALL Win+<x> combos ──
-        if vk_code in (VK_LWIN, VK_RWIN):
-            return True
+        name = event.name
 
-        # ── Alt + Tab  (task switcher) ──────────────────────────
-        if alt_down and vk_code == VK_TAB:
-            return True
+        # Allow Enter → trigger password check via tkinter
+        if name == 'enter':
+            if self._root:
+                self._root.event_generate("<<CheckPassword>>")
+            return
 
-        # ── Alt + Esc  (cycle windows) ─────────────────────────
-        if alt_down and vk_code == VK_ESCAPE:
-            return True
+        # Allow Backspace → delete last char in entry
+        if name == 'backspace':
+            if self._entry:
+                content = self._entry.get()
+                if content:
+                    self._entry.delete(len(content) - 1, tk.END)
+            return
 
-        # ── Alt + F4   (close / shut-down dialog) ──────────────
-        if alt_down and vk_code == VK_F4:
-            return True
+        # Allow single printable characters → insert into entry
+        if len(name) == 1:
+            # Check if Shift is held for uppercase
+            if keyboard.is_pressed('shift'):
+                name = name.upper()
+            if self._entry:
+                self._entry.insert(tk.END, name)
+            return
 
-        # ── Ctrl + Esc (Start menu) ────────────────────────────
-        if ctrl_down and vk_code == VK_ESCAPE:
-            return True
+        # Allow space
+        if name == 'space':
+            if self._entry:
+                self._entry.insert(tk.END, ' ')
+            return
 
-        # ── Ctrl + Shift + Esc (Task Manager) ─────────────────
-        if ctrl_down and shift_down and vk_code == VK_ESCAPE:
-            return True
-
-        return False
-
-    # ── hook callback ─────────────────────────────────
-    def _low_level_handler(self, nCode, wParam, lParam):
-        if nCode >= 0 and wParam in ALL_KEY_MSGS:
-            # Parse the KBDLLHOOKSTRUCT properly
-            kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
-            if self._should_block(kb.vkCode, kb.flags):
-                return 1   # swallow — do NOT pass to next hook
-
-        return ctypes.windll.user32.CallNextHookEx(
-            self._hook, nCode, wParam, lParam
-        )
-
-    # ── install / uninstall ───────────────────────────
-    def _message_loop(self):
-        """Pump messages on a dedicated thread so the hook stays alive."""
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-
-        self._hook = user32.SetWindowsHookExW(
-            WH_KEYBOARD_LL,
-            self._callback,
-            kernel32.GetModuleHandleW(None),
-            0,
-        )
-        if not self._hook:
-            return  # hook failed — nothing we can do
-
-        msg = wintypes.MSG()
-        while user32.GetMessageW(ctypes.byref(msg), 0, 0, 0) != 0:
-            user32.TranslateMessage(ctypes.byref(msg))
-            user32.DispatchMessageW(ctypes.byref(msg))
+        # Everything else (Alt, Tab, Win, Ctrl, Esc, F-keys, etc.)
+        # is silently swallowed — suppress=True already blocked it.
 
     def install(self):
-        self._thread = threading.Thread(target=self._message_loop, daemon=True)
-        self._thread.start()
+        """Start suppressing all keys globally."""
+        keyboard.hook(self._on_key, suppress=True)
 
     def uninstall(self):
-        if self._hook:
-            ctypes.windll.user32.UnhookWindowsHookEx(self._hook)
-            self._hook = None
+        """Stop suppressing keys — restore normal keyboard."""
+        keyboard.unhook_all()
 
 
 # ──────────────────── Screen Locker ────────────────────
@@ -215,6 +155,8 @@ class ScreenLocker:
         self._setup_window()
         self._build_ui()
         self._bind_events()
+        # Give the blocker access to the entry + root
+        self.kb_blocker.set_entry(self.entry, self.root)
 
     # ── Window setup ──────────────────────────────────
     def _setup_window(self):
@@ -256,7 +198,6 @@ class ScreenLocker:
                               insertbackground=TEXT_COLOR,
                               relief="flat", justify="center", width=25)
         self.entry.pack(ipady=8, pady=(0, 15))
-        self.entry.focus_set()
 
         self.btn = tk.Button(frame, text="Unlock", font=(FONT_FAMILY, 14, "bold"),
                              bg=ACCENT_COLOR, fg="white", activebackground="#c0392b",
@@ -270,7 +211,7 @@ class ScreenLocker:
 
     # ── Events ────────────────────────────────────────
     def _bind_events(self):
-        self.root.bind("<Return>", lambda e: self._check_password())
+        self.root.bind("<<CheckPassword>>", lambda e: self._check_password())
         self.root.bind("<Escape>", lambda e: self._block())
         self.root.bind("<Alt-Tab>", lambda e: "break")
         self.root.bind("<Alt-F4>", lambda e: "break")
@@ -280,7 +221,6 @@ class ScreenLocker:
         try:
             self.root.attributes("-topmost", True)
             self.root.focus_force()
-            self.entry.focus_set()
             self.root.after(300, self._keep_on_top)
         except tk.TclError:
             pass  # window already destroyed
