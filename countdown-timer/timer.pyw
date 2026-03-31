@@ -261,14 +261,14 @@ class CountdownApp(tk.Tk):
     # ────────────────────── UI ──────────────────────
     def _build_ui(self):
         # Top bar with title + gear
-        top = tk.Frame(self, bg=BG)
-        top.pack(fill="x", padx=10, pady=(10, 0))
+        self._top_frame = tk.Frame(self, bg=BG)
+        self._top_frame.pack(fill="x", padx=10, pady=(10, 0))
 
-        self.title_lbl = tk.Label(top, text="🌸 Nhắc Nhở 🌸",
+        self.title_lbl = tk.Label(self._top_frame, text="🌸 Nhắc Nhở 🌸",
                                   font=self.title_font, bg=BG, fg=ACCENT_GLOW)
         self.title_lbl.pack(side="left", expand=True)
 
-        self.gear_btn = tk.Button(top, text="⚙", font=self.btn_font,
+        self.gear_btn = tk.Button(self._top_frame, text="⚙", font=self.btn_font,
                                   bg=BG, fg=TEXT_DIM, activebackground=BG_DARK,
                                   activeforeground=TEXT, bd=0, padx=6, pady=0,
                                   cursor="hand2", command=self._open_settings)
@@ -293,26 +293,26 @@ class CountdownApp(tk.Tk):
         self.msg_label.pack(pady=4)
 
         # Buttons
-        bf = tk.Frame(self, bg=BG)
-        bf.pack(pady=(4, 6))
+        self._btn_frame = tk.Frame(self, bg=BG)
+        self._btn_frame.pack(pady=(4, 6))
 
-        self.start_btn = tk.Button(bf, text="▶  Bắt Đầu", font=self.btn_font,
+        self.start_btn = tk.Button(self._btn_frame, text="▶  Bắt Đầu", font=self.btn_font,
                                    bg=ACCENT, fg=TEXT, activebackground=ACCENT_GLOW,
                                    activeforeground=TEXT, bd=0, padx=16, pady=5,
                                    cursor="hand2", command=self._toggle)
         self.start_btn.pack(side="left", padx=4)
 
-        self.reset_btn = tk.Button(bf, text="↻  Reset", font=self.btn_font,
+        self.reset_btn = tk.Button(self._btn_frame, text="↻  Reset", font=self.btn_font,
                                    bg=RING_BG, fg=TEXT_DIM, activebackground=BG_DARK,
                                    activeforeground=TEXT, bd=0, padx=16, pady=5,
                                    cursor="hand2", command=self._reset)
         self.reset_btn.pack(side="left", padx=4)
 
         # Mini toggle
-        bf2 = tk.Frame(self, bg=BG)
-        bf2.pack(pady=(0, 10))
+        self._mini_frame = tk.Frame(self, bg=BG)
+        self._mini_frame.pack(pady=(0, 10))
 
-        self.mini_btn = tk.Button(bf2, text="🔽 Thu Nhỏ", font=self.btn_font,
+        self.mini_btn = tk.Button(self._mini_frame, text="🔽 Thu Nhỏ", font=self.btn_font,
                                   bg=MINI_BTN, fg=TEXT, activebackground="#1a5276",
                                   activeforeground=TEXT, bd=0, padx=16, pady=5,
                                   cursor="hand2", command=self._toggle_mini)
@@ -336,14 +336,18 @@ class CountdownApp(tk.Tk):
         cs = int(self.canvas_size * MINI_SCALE)
         self.canvas.config(width=cs, height=cs)
 
-        self.title_lbl.pack_configure(pady=(6, 1))
-        self.canvas.pack_configure(pady=2)
-        self.msg_label.config(wraplength=MINI_W - 10)
-        self.msg_label.pack_configure(pady=1)
+        # Forget everything first
+        self._top_frame.pack_forget()
+        self.canvas.pack_forget()
+        self.state_label.pack_forget()
+        self.msg_label.pack_forget()
+        self._btn_frame.pack_forget()
+        self._mini_frame.pack_forget()
 
-        self.reset_btn.pack_forget()
-        self.gear_btn.pack_forget()
-        self.mini_btn.config(text="🔼")
+        # Re-pack only canvas + expand button
+        self.canvas.pack(pady=2)
+        self.mini_btn.config(text="🔼 Mở")
+        self._mini_frame.pack(pady=(0, 2))
 
         self._set_geometry(MINI_W, MINI_H)
         self._draw_ring()
@@ -354,14 +358,29 @@ class CountdownApp(tk.Tk):
         self._apply_fonts()
 
         self.canvas.config(width=self.canvas_size, height=self.canvas_size)
-        self.title_lbl.pack_configure(pady=(14, 2))
-        self.canvas.pack_configure(pady=6)
-        self.msg_label.config(wraplength=280)
-        self.msg_label.pack_configure(pady=4)
 
-        self.reset_btn.pack(side="left", padx=4)
-        self.gear_btn.pack(side="right")
+        # Forget everything first
+        self.canvas.pack_forget()
+        self._mini_frame.pack_forget()
+
+        # Re-pack all widgets in correct order
+        self.title_lbl.pack(side="left", expand=True, in_=self._top_frame)
+        self.gear_btn.pack(side="right", in_=self._top_frame)
+        self._top_frame.pack(fill="x", padx=10, pady=(10, 0))
+
+        self.canvas.pack(pady=6)
+
+        self.state_label.pack()
+
+        self.msg_label.config(wraplength=280)
+        self.msg_label.pack(pady=4)
+
+        self.start_btn.pack(side="left", padx=4, in_=self._btn_frame)
+        self.reset_btn.pack(side="left", padx=4, in_=self._btn_frame)
+        self._btn_frame.pack(pady=(4, 6))
+
         self.mini_btn.config(text="🔽 Thu Nhỏ")
+        self._mini_frame.pack(pady=(0, 10))
 
         self._set_geometry(FULL_W, FULL_H)
         self._draw_ring()
@@ -493,6 +512,7 @@ class CountdownApp(tk.Tk):
 
         if self.state() == "iconic":
             self.was_minimized = True
+            self.attributes("-alpha", 0.35)        # low opacity while popping up
             ctypes.windll.user32.ShowWindow(self._hwnd, 4)
             self.after(50, self._raise_no_focus)
             delay = self.cfg["remind_show_seconds"] * 1000
@@ -515,6 +535,7 @@ class CountdownApp(tk.Tk):
     def _re_minimize(self):
         self.remind_hide_id = None
         if self.was_minimized:
+            self.attributes("-alpha", 1.0)         # restore full opacity
             self.iconify()
             self.was_minimized = False
 
