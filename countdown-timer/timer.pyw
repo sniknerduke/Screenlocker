@@ -19,6 +19,7 @@ DEFAULTS = {
     "countdown_seconds":    90,
     "auto_restart_seconds": 1,
     "remind_show_seconds":  5,
+    "opacity":              0.35,
     "messages": [
         "🌟 Nghỉ ngơi chút nha! 🌟",
         "💖 Uống nước đi bạn ơi~ 💖",
@@ -82,7 +83,7 @@ class SettingsDialog(tk.Toplevel):
         self.attributes("-topmost", True)
         self.grab_set()
 
-        w, h = 380, 480
+        w, h = 380, 540
         sx = parent.winfo_x() - w - 10
         sy = parent.winfo_y()
         if sx < 0:
@@ -128,6 +129,27 @@ class SettingsDialog(tk.Toplevel):
                  bg=BG_DARK, fg=TEXT, insertbackground=TEXT,
                  bd=0, relief="flat").pack(fill="x", ipady=4, pady=(2, 0))
 
+        # ── Opacity ──
+        f_op = tk.Frame(self, bg=BG)
+        f_op.pack(fill="x", padx=20, pady=4)
+        self.opacity_val = tk.DoubleVar(value=cfg.get("opacity", 0.35))
+        op_label_frame = tk.Frame(f_op, bg=BG)
+        op_label_frame.pack(fill="x")
+        tk.Label(op_label_frame, text="👻 Độ mờ khi nhắc nhở (minimize):",
+                 font=lbl_font, bg=BG, fg=TEXT).pack(side="left")
+        self.opacity_display = tk.Label(op_label_frame,
+                 text=f"{self.opacity_val.get():.2f}",
+                 font=lbl_font, bg=BG, fg=ACCENT_GLOW)
+        self.opacity_display.pack(side="right")
+        self.opacity_scale = tk.Scale(f_op, from_=0.05, to=1.0,
+                 resolution=0.05, orient="horizontal",
+                 variable=self.opacity_val,
+                 bg=BG_DARK, fg=TEXT, troughcolor=RING_BG,
+                 highlightthickness=0, bd=0, sliderlength=18,
+                 showvalue=False, length=320,
+                 command=self._update_opacity_label)
+        self.opacity_scale.pack(fill="x", pady=(2, 0))
+
         # ── Messages ──
         f4 = tk.Frame(self, bg=BG)
         f4.pack(fill="x", padx=20, pady=4)
@@ -153,6 +175,9 @@ class SettingsDialog(tk.Toplevel):
                   bd=0, padx=20, pady=6, cursor="hand2",
                   command=self.destroy).pack(side="left", padx=6)
 
+    def _update_opacity_label(self, val):
+        self.opacity_display.config(text=f"{float(val):.2f}")
+
     def _save(self):
         try:
             cd = max(1, int(self.countdown_var.get()))
@@ -167,6 +192,8 @@ class SettingsDialog(tk.Toplevel):
         except ValueError:
             rs = self.cfg["remind_show_seconds"]
 
+        opacity = max(0.05, min(1.0, self.opacity_val.get()))
+
         raw = self.msg_text.get("1.0", "end").strip()
         msgs = [m.strip() for m in raw.split("\n") if m.strip()]
         if not msgs:
@@ -176,6 +203,7 @@ class SettingsDialog(tk.Toplevel):
             "countdown_seconds":    cd,
             "auto_restart_seconds": ar,
             "remind_show_seconds":  rs,
+            "opacity":              opacity,
             "messages":             msgs,
         }
         save_config(new_cfg)
@@ -512,7 +540,7 @@ class CountdownApp(tk.Tk):
 
         if self.state() == "iconic":
             self.was_minimized = True
-            self.attributes("-alpha", 0.35)        # low opacity while popping up
+            self.attributes("-alpha", self.cfg.get("opacity", 0.35))  # configurable opacity
             ctypes.windll.user32.ShowWindow(self._hwnd, 4)
             self.after(50, self._raise_no_focus)
             delay = self.cfg["remind_show_seconds"] * 1000
