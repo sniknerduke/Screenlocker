@@ -20,6 +20,7 @@ DEFAULTS = {
     "auto_restart_seconds": 1,
     "remind_show_seconds":  5,
     "opacity":              0.35,
+    "mini_idle_opacity":    0.2,
     "messages": [
         "🌟 Nghỉ ngơi chút nha! 🌟",
         "💖 Uống nước đi bạn ơi~ 💖",
@@ -83,7 +84,7 @@ class SettingsDialog(tk.Toplevel):
         self.attributes("-topmost", True)
         self.grab_set()
 
-        w, h = 380, 540
+        w, h = 380, 610
         sx = parent.winfo_x() - w - 10
         sy = parent.winfo_y()
         if sx < 0:
@@ -129,7 +130,7 @@ class SettingsDialog(tk.Toplevel):
                  bg=BG_DARK, fg=TEXT, insertbackground=TEXT,
                  bd=0, relief="flat").pack(fill="x", ipady=4, pady=(2, 0))
 
-        # ── Opacity ──
+        # ── Opacity (minimize reminder) ──
         f_op = tk.Frame(self, bg=BG)
         f_op.pack(fill="x", padx=20, pady=4)
         self.opacity_val = tk.DoubleVar(value=cfg.get("opacity", 0.35))
@@ -149,6 +150,27 @@ class SettingsDialog(tk.Toplevel):
                  showvalue=False, length=320,
                  command=self._update_opacity_label)
         self.opacity_scale.pack(fill="x", pady=(2, 0))
+
+        # ── Mini idle opacity ──
+        f_mop = tk.Frame(self, bg=BG)
+        f_mop.pack(fill="x", padx=20, pady=4)
+        self.mini_opacity_val = tk.DoubleVar(value=cfg.get("mini_idle_opacity", 0.2))
+        mop_label_frame = tk.Frame(f_mop, bg=BG)
+        mop_label_frame.pack(fill="x")
+        tk.Label(mop_label_frame, text="🔽 Độ mờ khi thu nhỏ (idle):",
+                 font=lbl_font, bg=BG, fg=TEXT).pack(side="left")
+        self.mini_opacity_display = tk.Label(mop_label_frame,
+                 text=f"{self.mini_opacity_val.get():.2f}",
+                 font=lbl_font, bg=BG, fg=ACCENT_GLOW)
+        self.mini_opacity_display.pack(side="right")
+        self.mini_opacity_scale = tk.Scale(f_mop, from_=0.05, to=1.0,
+                 resolution=0.05, orient="horizontal",
+                 variable=self.mini_opacity_val,
+                 bg=BG_DARK, fg=TEXT, troughcolor=RING_BG,
+                 highlightthickness=0, bd=0, sliderlength=18,
+                 showvalue=False, length=320,
+                 command=self._update_mini_opacity_label)
+        self.mini_opacity_scale.pack(fill="x", pady=(2, 0))
 
         # ── Messages ──
         f4 = tk.Frame(self, bg=BG)
@@ -178,6 +200,9 @@ class SettingsDialog(tk.Toplevel):
     def _update_opacity_label(self, val):
         self.opacity_display.config(text=f"{float(val):.2f}")
 
+    def _update_mini_opacity_label(self, val):
+        self.mini_opacity_display.config(text=f"{float(val):.2f}")
+
     def _save(self):
         try:
             cd = max(1, int(self.countdown_var.get()))
@@ -193,6 +218,7 @@ class SettingsDialog(tk.Toplevel):
             rs = self.cfg["remind_show_seconds"]
 
         opacity = max(0.05, min(1.0, self.opacity_val.get()))
+        mini_opacity = max(0.05, min(1.0, self.mini_opacity_val.get()))
 
         raw = self.msg_text.get("1.0", "end").strip()
         msgs = [m.strip() for m in raw.split("\n") if m.strip()]
@@ -204,6 +230,7 @@ class SettingsDialog(tk.Toplevel):
             "auto_restart_seconds": ar,
             "remind_show_seconds":  rs,
             "opacity":              opacity,
+            "mini_idle_opacity":    mini_opacity,
             "messages":             msgs,
         }
         save_config(new_cfg)
@@ -245,6 +272,7 @@ class CountdownApp(tk.Tk):
         self.auto_restart_id = None
         self.remind_hide_id  = None
         self.was_minimized   = False
+        self.mini_flash_id   = None
 
         self._build_ui()
 
@@ -380,10 +408,22 @@ class CountdownApp(tk.Tk):
         self._set_geometry(MINI_W, MINI_H)
         self._draw_ring()
 
+        # Apply idle opacity for mini mode
+        idle_op = self.cfg.get("mini_idle_opacity", 0.2)
+        self.attributes("-alpha", idle_op)
+
     def _expand(self):
         self.is_mini = False
         self._build_fonts("full")
         self._apply_fonts()
+
+        # Cancel any pending mini flash restore
+        if self.mini_flash_id:
+            self.after_cancel(self.mini_flash_id)
+            self.mini_flash_id = None
+
+        # Restore full opacity when expanding
+        self.attributes("-alpha", 1.0)
 
         self.canvas.config(width=self.canvas_size, height=self.canvas_size)
 
@@ -539,12 +579,19 @@ class CountdownApp(tk.Tk):
         self._pulse_msg()
 
         if self.state() == "iconic":
+            # ── Window is minimized: restore, show, re-minimize ──
             self.was_minimized = True
-            self.attributes("-alpha", self.cfg.get("opacity", 0.35))  # configurable opacity
+            self.attributes("-alpha", self.cfg.get("opacity", 0.35))
             ctypes.windll.user32.ShowWindow(self._hwnd, 4)
             self.after(50, self._raise_no_focus)
             delay = self.cfg["remind_show_seconds"] * 1000
             self.remind_hide_id = self.after(delay, self._re_minimize)
+        elif self.is_mini:
+            # ── Mini mode (not minimized): flash opacity to 1.0 ──
+            self.attributes("-alpha", 1.0)
+            self._raise_no_focus()
+            delay = self.cfg["remind_show_seconds"] * 1000
+            self.mini_flash_id = self.after(delay, self._restore_mini_opacity)
         else:
             self._raise_no_focus()
 
@@ -566,6 +613,13 @@ class CountdownApp(tk.Tk):
             self.attributes("-alpha", 1.0)         # restore full opacity
             self.iconify()
             self.was_minimized = False
+
+    def _restore_mini_opacity(self):
+        """After remind_show_seconds, restore mini idle opacity."""
+        self.mini_flash_id = None
+        if self.is_mini:
+            idle_op = self.cfg.get("mini_idle_opacity", 0.2)
+            self.attributes("-alpha", idle_op)
 
     def _pulse_msg(self):
         if self.remaining > 0 and self.running:

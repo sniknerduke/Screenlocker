@@ -1,0 +1,9 @@
+{
+  "countdown_seconds": 90,
+  "auto_restart_seconds": 1,
+  "remind_show_seconds": 5,
+  "opacity": 1.0,
+  "messages": [
+    "nahhhhhh"
+  ]
+}

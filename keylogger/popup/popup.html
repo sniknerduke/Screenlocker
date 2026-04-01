@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="popup.css">
+  <title>Website Password Lock</title>
+</head>
+<body>
+  <div class="container">
+    <h1>🔒 Website Lock</h1>
+
+    <!-- Setup password section (first time) -->
+    <div id="setup-section" class="hidden">
+      <p class="desc">Tạo mật khẩu chính để bảo vệ các website</p>
+      <input type="password" id="setup-password" placeholder="Nhập mật khẩu" />
+      <input type="password" id="setup-confirm" placeholder="Xác nhận mật khẩu" />
+      <button id="btn-setup" class="btn primary">Tạo mật khẩu</button>
+    </div>
+
+    <!-- Login section -->
+    <div id="login-section" class="hidden">
+      <p class="desc">Nhập mật khẩu để quản lý danh sách</p>
+      <input type="password" id="login-password" placeholder="Mật khẩu" />
+      <button id="btn-login" class="btn primary">Mở khóa</button>
+    </div>
+
+    <!-- Main management section -->
+    <div id="main-section" class="hidden">
+      <div class="add-site">
+        <input type="text" id="site-input" placeholder="VD: facebook.com" />
+        <button id="btn-add" class="btn primary">Thêm</button>
+      </div>
+
+      <div id="site-list" class="site-list"></div>
+
+      <hr />
+      <button id="btn-change-pass" class="btn secondary">Đổi mật khẩu</button>
+      <button id="btn-lock" class="btn danger">Khóa lại</button>
+    </div>
+
+    <!-- Change password section -->
+    <div id="change-pass-section" class="hidden">
+      <p class="desc">Đổi mật khẩu chính</p>
+      <input type="password" id="old-password" placeholder="Mật khẩu cũ" />
+      <input type="password" id="new-password" placeholder="Mật khẩu mới" />
+      <input type="password" id="new-confirm" placeholder="Xác nhận mật khẩu mới" />
+      <button id="btn-save-pass" class="btn primary">Lưu</button>
+      <button id="btn-cancel-change" class="btn secondary">Hủy</button>
+    </div>
+
+    <p id="status-msg" class="status"></p>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
