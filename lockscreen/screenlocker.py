@@ -1,7 +1,7 @@
 """
-Screen Locker - A full-screen locker that blocks keyboard shortcuts and
-requires a password to unlock.  To cancel without the password, restart
-the computer.
+Screen Locker - A full-screen overlay that blocks keyboard shortcuts and
+requires a password to unlock.  Mouse clicks pass through the overlay
+so that scripts and automation running underneath continue to work.
 
 First run:  Shows a setup window to configure password, hint, and
             lock message.  Settings are saved to screenlocker.json.
@@ -10,6 +10,7 @@ Next runs:  Immediately locks the screen using saved settings.
 
 Uses the 'keyboard' library (suppress=True) for reliable OS-level
 key blocking — the same approach used by proven screen lockers on GitHub.
+Mouse click-through uses Win32 WS_EX_TRANSPARENT + WS_EX_LAYERED.
 
 ** Run as Administrator for maximum effectiveness. **
 """
@@ -17,6 +18,8 @@ key blocking — the same approach used by proven screen lockers on GitHub.
 import tkinter as tk
 from tkinter import messagebox
 import ctypes
+import ctypes.wintypes
+import struct
 import sys
 import os
 import json
@@ -24,6 +27,35 @@ import argparse
 import winreg
 import time
 import keyboard  # pip install keyboard
+
+# ──────────────────── Win32 click-through ──────────────
+GWL_EXSTYLE       = -20
+WS_EX_LAYERED     = 0x00080000
+WS_EX_TRANSPARENT = 0x00000020
+LWA_ALPHA         = 0x00000002
+
+user32 = ctypes.windll.user32
+
+# Choose 32-bit vs 64-bit variants
+if struct.calcsize("P") == 8:
+    _SetWindowLong = user32.SetWindowLongPtrW
+    _GetWindowLong = user32.GetWindowLongPtrW
+    _LONG_PTR = ctypes.c_int64
+else:
+    _SetWindowLong = user32.SetWindowLongW
+    _GetWindowLong = user32.GetWindowLongW
+    _LONG_PTR = ctypes.c_long
+
+_SetWindowLong.restype  = _LONG_PTR
+_SetWindowLong.argtypes = [ctypes.wintypes.HWND, ctypes.c_int, _LONG_PTR]
+_GetWindowLong.restype  = _LONG_PTR
+_GetWindowLong.argtypes = [ctypes.wintypes.HWND, ctypes.c_int]
+
+user32.SetLayeredWindowAttributes.restype  = ctypes.wintypes.BOOL
+user32.SetLayeredWindowAttributes.argtypes = [
+    ctypes.wintypes.HWND, ctypes.wintypes.COLORREF,
+    ctypes.wintypes.BYTE, ctypes.wintypes.DWORD
+]
 
 # ──────────────────── Theme ────────────────────────────
 BG_COLOR       = "#0f0e17"
@@ -352,7 +384,6 @@ class ScreenLocker:
         self.root.protocol("WM_DELETE_WINDOW", self._block)
         self.root.overrideredirect(True)
         try:
-            user32 = ctypes.windll.user32
             w = user32.GetSystemMetrics(78)
             h = user32.GetSystemMetrics(79)
             x = user32.GetSystemMetrics(76)
@@ -360,6 +391,24 @@ class ScreenLocker:
             self.root.geometry(f"{w}x{h}+{x}+{y}")
         except Exception:
             pass
+        # Apply click-through after the window is mapped
+        self.root.after(100, self._make_click_through)
+
+    def _make_click_through(self):
+        """Make the overlay window transparent to mouse clicks using Win32 API."""
+        self.root.update_idletasks()
+        # Get the real Win32 top-level HWND via tkinter's wm_frame()
+        try:
+            hwnd = int(self.root.wm_frame(), 16)
+        except Exception:
+            hwnd = self.root.winfo_id()
+
+        hwnd = ctypes.wintypes.HWND(hwnd)
+        style = _GetWindowLong(hwnd, GWL_EXSTYLE)
+        style = style | WS_EX_LAYERED | WS_EX_TRANSPARENT
+        _SetWindowLong(hwnd, GWL_EXSTYLE, _LONG_PTR(style))
+        # Set alpha: 255 = fully opaque — hides everything underneath
+        user32.SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
 
     def _build_ui(self):
         # Card in center
@@ -441,7 +490,7 @@ class ScreenLocker:
     def _keep_on_top(self):
         try:
             self.root.attributes("-topmost", True)
-            self.root.focus_force()
+            # Do NOT call focus_force() — let the mouse interact freely
             self.root.after(300, self._keep_on_top)
         except tk.TclError:
             pass
